@@ -1,0 +1,146 @@
+:root {
+  color-scheme: only light;
+  --paper: #fdfdfd;
+  --ink: #111111;
+  --shadow: 0 18px 40px rgba(0, 0, 0, 0.08);
+  --play-width: 320px;
+  --play-height: 480px;
+  --controls-space: 120px;
+  --font: "IBM Plex Mono", "Courier New", monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  overscroll-behavior: none;
+  touch-action: none;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: radial-gradient(circle at top, #f1f1f1 0%, #ffffff 55%, #eeeeee 100%);
+  color: var(--ink);
+  font-family: var(--font);
+}
+
+.page {
+  width: 100%;
+  max-width: 520px;
+  padding: 8px 14px calc(24px + var(--controls-space));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.title {
+  text-align: center;
+}
+
+.title h1 {
+  margin: 0;
+  font-size: 28px;
+  letter-spacing: 0.35em;
+  text-indent: 0.35em;
+}
+
+.title p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.24em;
+}
+
+.game {
+  width: var(--play-width);
+  height: var(--play-height);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  box-shadow: var(--shadow);
+}
+
+.controls {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 12px 18px calc(12px + env(safe-area-inset-bottom));
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  pointer-events: none;
+}
+
+.controls .pad,
+.controls .jump {
+  pointer-events: auto;
+}
+
+.pad {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(70px, 1fr));
+  gap: 10px;
+  width: min(240px, 52vw);
+  touch-action: none;
+}
+
+.control {
+  padding: 16px 10px;
+  min-height: 64px;
+  border-radius: 10px;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  transition: background 0.12s ease, color 0.12s ease, transform 0.12s ease;
+}
+
+.control.jump {
+  font-weight: 700;
+}
+
+.control:active,
+.control.pressed {
+  background: var(--ink);
+  color: var(--paper);
+  transform: translateY(1px);
+}
+
+.hint {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  opacity: 0.75;
+}
+
+@media (max-width: 480px) {
+  .control {
+    padding: 16px 8px;
+    font-size: 13px;
+  }
+}
