@@ -11,25 +11,28 @@
   </head>
   <body>
     <main class="page">
+      <header class="title">
+        <h1>IRIS</h1>
+        <p>Exploration Prototype</p>
+      </header>
+
       <section class="game" aria-label="Play area">
-        <canvas id="game" width="400" height="400"></canvas>
+        <canvas id="game" width="320" height="480"></canvas>
       </section>
 
       <section class="controls" aria-label="Controls">
-        <div class="pad" data-action="move" aria-label="Move">
-          <button class="control left" data-action="left" aria-label="Move left">
+        <div class="pad" aria-label="Move">
+          <button class="control left" data-dir="left" aria-label="Move left">
             Left
           </button>
-          <button class="control right" data-action="right" aria-label="Move right">
+          <button class="control right" data-dir="right" aria-label="Move right">
             Right
           </button>
         </div>
-        <button class="control jump" data-action="jump" aria-label="Jump">
-          Jump
-        </button>
+        <button class="control jump" data-dir="jump" aria-label="Jump">Jump</button>
       </section>
 
-      <footer class="hint">Arrow keys or buttons</footer>
+      <footer class="hint">Arrow keys / WASD / buttons</footer>
     </main>
 
     <script src="script.js"></script>

@@ -1,11 +1,13 @@
 :root {
   color-scheme: only light;
-  --paper: #fdfdfd;
-  --ink: #111111;
-  --shadow: 0 18px 40px rgba(0, 0, 0, 0.08);
+  --paper: #f6efe6;
+  --ink: #1a1712;
+  --frame: #1c1914;
+  --accent: #d9674a;
+  --shadow: 0 18px 40px rgba(25, 20, 14, 0.18);
   --play-width: 320px;
   --play-height: 480px;
-  --controls-space: 120px;
+  --controls-space: 140px;
   --font: "IBM Plex Mono", "Courier New", monospace;
 }
 
@@ -28,7 +30,7 @@ body {
   display: flex;
   justify-content: center;
   align-items: center;
-  background: radial-gradient(circle at top, #f1f1f1 0%, #ffffff 55%, #eeeeee 100%);
+  background: radial-gradient(circle at top, #fdf6eb 0%, #f5eadc 45%, #e7d6c3 100%);
   color: var(--ink);
   font-family: var(--font);
 }
@@ -36,11 +38,11 @@ body {
 .page {
   width: 100%;
   max-width: 520px;
-  padding: 8px 14px calc(24px + var(--controls-space));
+  padding: 12px 16px calc(24px + var(--controls-space));
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
 }
 
 .title {
@@ -50,15 +52,15 @@ body {
 .title h1 {
   margin: 0;
   font-size: 28px;
-  letter-spacing: 0.35em;
-  text-indent: 0.35em;
+  letter-spacing: 0.32em;
+  text-indent: 0.32em;
 }
 
 .title p {
   margin: 6px 0 0;
-  font-size: 12px;
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.24em;
+  letter-spacing: 0.22em;
 }
 
 .game {
@@ -73,7 +75,7 @@ canvas {
   width: 100%;
   height: 100%;
   display: block;
-  border: 2px solid var(--ink);
+  border: 2px solid var(--frame);
   background: var(--paper);
   box-shadow: var(--shadow);
 }
@@ -83,7 +85,7 @@ canvas {
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 12px 18px calc(12px + env(safe-area-inset-bottom));
+  padding: 12px 18px calc(16px + env(safe-area-inset-bottom));
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
@@ -108,7 +110,7 @@ canvas {
   padding: 16px 10px;
   min-height: 64px;
   border-radius: 10px;
-  border: 2px solid var(--ink);
+  border: 2px solid var(--frame);
   background: var(--paper);
   color: var(--ink);
   font-size: 13px;
@@ -122,6 +124,7 @@ canvas {
 
 .control.jump {
   font-weight: 700;
+  min-width: 110px;
 }
 
 .control:active,
@@ -139,6 +142,10 @@ canvas {
 }
 
 @media (max-width: 480px) {
+  .title h1 {
+    font-size: 24px;
+  }
+
   .control {
     padding: 16px 8px;
     font-size: 13px;
