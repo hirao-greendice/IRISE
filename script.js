@@ -10,10 +10,27 @@ const input = {
 const leftButton = document.querySelector(".control.left");
 const rightButton = document.querySelector(".control.right");
 const jumpButton = document.querySelector(".control.jump");
+const mapButton = document.querySelector(".map-button");
+const mapOverlay = document.querySelector(".map-overlay");
+const mapClose = document.querySelector(".map-close");
+const mapCanvas = document.getElementById("map");
+const mapCtx = mapCanvas.getContext("2d");
+const editorButton = document.querySelector(".editor-button");
+const editorPanel = document.querySelector(".editor-panel");
+const editorClose = document.querySelector(".editor-close");
+const stageSelect = document.getElementById("stage-select");
+const currentStageLabel = document.getElementById("current-stage-label");
+const gridColsInput = document.getElementById("grid-cols");
+const gridRowsInput = document.getElementById("grid-rows");
+const gridApplyButton = document.getElementById("grid-apply");
+const editorClearButton = document.getElementById("editor-clear");
+const editorSaveButton = document.getElementById("editor-save");
+const tileButtons = Array.from(document.querySelectorAll(".tile-button"));
 
-const GRID_COLS = 10;
-const GRID_ROWS = 15;
-const AREA_SIZE = 5;
+const DEFAULT_GRID = { cols: 14, rows: 21 };
+const GRID_LIMITS = { min: 6, max: 40 };
+const AREA_COLS = 2;
+const AREA_ROWS = 3;
 const PLAYER_SIZE = 1;
 const MOVE_SPEED = 6.4;
 const JUMP_SPEED = 12;
@@ -22,6 +39,21 @@ const MAX_FALL_SPEED = 18;
 const EXIT_TRIGGER = 0.4;
 const ENTRY_OFFSET = 0.2;
 const EPS = 0.001;
+const STORAGE_KEY = "iris-stages-v1";
+
+const TILE_TYPES = {
+  EMPTY: 0,
+  SOLID: 1,
+  HALF_TOP: 2,
+  HALF_BOTTOM: 3,
+  HALF_LEFT: 4,
+  HALF_RIGHT: 5,
+  ONEWAY: 6,
+};
+const MAX_TILE_ID = 6;
+const STAGE_IDS = Array.from({ length: 10 }, (_, index) => String(index));
+const VOID_STAGE_ID = "void";
+const EDITOR_STAGE_IDS = [...STAGE_IDS, VOID_STAGE_ID];
 
 const SEGMENT_KEYS = ["a", "b", "c", "d", "e", "f", "g"];
 const SEGMENT_INDEX = {
@@ -67,12 +99,6 @@ const VOID_THEME = {
   accent: "#8b5e4b",
 };
 
-const EXIT_BANDS = {
-  top: { min: 6.25, max: 8.75 },
-  bottom: { min: 6.25, max: 8.75 },
-  left: { min: 6.25, max: 8.75 },
-  right: { min: 6.25, max: 8.75 },
-};
 const EXIT_DIRS = {
   top: { x: 0, y: -1 },
   bottom: { x: 0, y: 1 },
@@ -84,9 +110,20 @@ let viewWidth = 320;
 let viewHeight = 480;
 let cellSize = 32;
 
+let grid = { ...DEFAULT_GRID };
+let stageStore = null;
+let editor = {
+  active: false,
+  selectedTile: TILE_TYPES.SOLID,
+  stageId: "0",
+  pointerDown: false,
+  dragTile: TILE_TYPES.SOLID,
+  hover: null,
+};
+
 let player = {
   x: 1.5,
-  y: 13,
+  y: grid.rows - 2,
   w: PLAYER_SIZE,
   h: PLAYER_SIZE,
   vx: 0,
@@ -103,12 +140,16 @@ let transition = {
   duration: 0.65,
   dir: { x: 0, y: 0 },
   nextStage: null,
+  nextCoord: null,
 };
 let playerRoom = "current";
 let lastTime = performance.now();
 
 let audioCtx = null;
 let audioUnlocked = false;
+let mapOpen = false;
+let worldMap = new Map();
+let currentCoord = { x: 0, y: 0 };
 
 function queueJump() {
   input.jumpQueued = true;
@@ -127,12 +168,199 @@ function setMove(dir, value) {
 function clearInput() {
   input.left = false;
   input.right = false;
+  input.jumpQueued = false;
   updateMoveButtons();
+}
+
+function openMap() {
+  if (mapOpen || editor.active) {
+    return;
+  }
+  mapOpen = true;
+  mapOverlay.classList.add("active");
+  mapOverlay.setAttribute("aria-hidden", "false");
+  clearInput();
+  renderMap();
+}
+
+function closeMap() {
+  if (!mapOpen) {
+    return;
+  }
+  mapOpen = false;
+  mapOverlay.classList.remove("active");
+  mapOverlay.setAttribute("aria-hidden", "true");
+}
+
+function setEditorMode(active) {
+  editor.active = active;
+  editorPanel.classList.toggle("active", active);
+  editorPanel.setAttribute("aria-hidden", active ? "false" : "true");
+  editorButton.classList.toggle("active", active);
+  if (active) {
+    closeMap();
+    clearInput();
+    updateCurrentStageLabel();
+    setEditorStage(currentStage.id);
+  } else {
+    editor.pointerDown = false;
+    editor.hover = null;
+  }
+}
+
+function updateTileButtons() {
+  tileButtons.forEach((button) => {
+    const tileId = Number(button.dataset.tile);
+    button.classList.toggle("active", tileId === editor.selectedTile);
+  });
+}
+
+function formatStageLabel(stageId) {
+  if (stageId === VOID_STAGE_ID) {
+    return "Void";
+  }
+  return stageId;
+}
+
+function updateCurrentStageLabel() {
+  if (!currentStageLabel) {
+    return;
+  }
+  currentStageLabel.textContent = formatStageLabel(currentStage.id);
+}
+
+function setEditorStage(stageId) {
+  if (!EDITOR_STAGE_IDS.includes(stageId)) {
+    return;
+  }
+  editor.stageId = stageId;
+  stageSelect.value = stageId;
+  currentStage = createStage(stageId);
+  player.x = Math.min(player.x, grid.cols - player.w);
+  player.y = Math.min(player.y, grid.rows - player.h);
+  pulses = [];
+  segments = createEmptySegments();
+}
+
+function applyGridSize(colsValue, rowsValue) {
+  const cols = clampNumber(
+    Number(colsValue),
+    GRID_LIMITS.min,
+    GRID_LIMITS.max,
+    grid.cols
+  );
+  const rows = clampNumber(
+    Number(rowsValue),
+    GRID_LIMITS.min,
+    GRID_LIMITS.max,
+    grid.rows
+  );
+  if (cols === grid.cols && rows === grid.rows) {
+    gridColsInput.value = cols;
+    gridRowsInput.value = rows;
+    return;
+  }
+  grid = { cols, rows };
+  stageStore.grid = { ...grid };
+  stageStore.stages = stageStore.stages.map((tiles) =>
+    resizeTiles(tiles, grid.cols, grid.rows)
+  );
+  stageStore.voidStage = resizeTiles(
+    stageStore.voidStage,
+    grid.cols,
+    grid.rows
+  );
+  currentStage = createStage(editor.stageId);
+  player.x = Math.min(player.x, grid.cols - player.w);
+  player.y = Math.min(player.y, grid.rows - player.h);
+  resize();
+  saveStageStore();
+  gridColsInput.value = cols;
+  gridRowsInput.value = rows;
+}
+
+function clearStage(stageId) {
+  const tiles = createEmptyTiles(grid.cols, grid.rows);
+  if (stageId === VOID_STAGE_ID) {
+    stageStore.voidStage = tiles;
+  } else {
+    const index = Number(stageId);
+    if (Number.isNaN(index)) {
+      return;
+    }
+    stageStore.stages[index] = tiles;
+  }
+  if (currentStage.id === stageId) {
+    currentStage.tiles = tiles;
+  }
+  saveStageStore();
+}
+
+function getEditableTiles(stageId) {
+  if (stageId === VOID_STAGE_ID) {
+    return stageStore.voidStage;
+  }
+  const index = Number(stageId);
+  if (Number.isNaN(index)) {
+    return null;
+  }
+  return stageStore.stages[index] || null;
+}
+
+function getTileFromEvent(event) {
+  const rect = canvas.getBoundingClientRect();
+  const x = (event.clientX - rect.left) / rect.width;
+  const y = (event.clientY - rect.top) / rect.height;
+  return {
+    tileX: Math.floor(x * grid.cols),
+    tileY: Math.floor(y * grid.rows),
+  };
+}
+
+function paintTile(tileX, tileY, tileType) {
+  if (
+    tileX < 0 ||
+    tileX >= grid.cols ||
+    tileY < 0 ||
+    tileY >= grid.rows
+  ) {
+    return;
+  }
+  const tiles = getEditableTiles(editor.stageId);
+  if (!tiles) {
+    return;
+  }
+  if (tiles[tileY][tileX] === tileType) {
+    return;
+  }
+  tiles[tileY][tileX] = tileType;
+  saveStageStore();
+}
+
+function initEditorUI() {
+  stageSelect.value = editor.stageId;
+  gridColsInput.value = grid.cols;
+  gridRowsInput.value = grid.rows;
+  updateTileButtons();
+  updateCurrentStageLabel();
 }
 
 function handleKey(down, event) {
   const key = event.key.toLowerCase();
   let handled = true;
+
+  if (mapOpen || editor.active) {
+    if (key === "escape" && down) {
+      if (mapOpen) {
+        closeMap();
+      }
+      if (editor.active) {
+        setEditorMode(false);
+      }
+      event.preventDefault();
+    }
+    return;
+  }
 
   switch (key) {
     case "arrowleft":
@@ -234,6 +462,112 @@ jumpButton.addEventListener("lostpointercapture", () => {
   jumpButton.classList.remove("pressed");
 });
 
+mapButton.addEventListener("click", () => {
+  openMap();
+});
+
+mapClose.addEventListener("click", () => {
+  closeMap();
+});
+
+editorButton.addEventListener("click", () => {
+  setEditorMode(!editor.active);
+});
+
+editorClose.addEventListener("click", () => {
+  setEditorMode(false);
+});
+
+stageSelect.addEventListener("change", (event) => {
+  setEditorStage(event.target.value);
+});
+
+gridApplyButton.addEventListener("click", () => {
+  applyGridSize(gridColsInput.value, gridRowsInput.value);
+});
+
+gridColsInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    applyGridSize(gridColsInput.value, gridRowsInput.value);
+  }
+});
+gridRowsInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    applyGridSize(gridColsInput.value, gridRowsInput.value);
+  }
+});
+
+editorClearButton.addEventListener("click", () => {
+  clearStage(editor.stageId);
+});
+
+editorSaveButton.addEventListener("click", () => {
+  saveStageStore();
+});
+
+tileButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    const tileId = Number(button.dataset.tile);
+    if (!Number.isNaN(tileId)) {
+      editor.selectedTile = tileId;
+      updateTileButtons();
+    }
+  });
+});
+
+canvas.addEventListener("contextmenu", (event) => {
+  if (editor.active) {
+    event.preventDefault();
+  }
+});
+
+canvas.addEventListener("pointerdown", (event) => {
+  if (!editor.active || mapOpen) {
+    return;
+  }
+  event.preventDefault();
+  canvas.setPointerCapture(event.pointerId);
+  editor.pointerDown = true;
+  editor.dragTile =
+    event.button === 2 || event.shiftKey
+      ? TILE_TYPES.EMPTY
+      : editor.selectedTile;
+  const { tileX, tileY } = getTileFromEvent(event);
+  editor.hover = { x: tileX, y: tileY };
+  paintTile(tileX, tileY, editor.dragTile);
+});
+
+canvas.addEventListener("pointermove", (event) => {
+  if (!editor.active || mapOpen) {
+    return;
+  }
+  const { tileX, tileY } = getTileFromEvent(event);
+  editor.hover = { x: tileX, y: tileY };
+  if (editor.pointerDown) {
+    paintTile(tileX, tileY, editor.dragTile);
+  }
+});
+
+canvas.addEventListener("pointerup", (event) => {
+  if (!editor.active) {
+    return;
+  }
+  editor.pointerDown = false;
+  try {
+    canvas.releasePointerCapture(event.pointerId);
+  } catch (error) {
+    // Ignore release errors.
+  }
+});
+
+canvas.addEventListener("pointerleave", () => {
+  if (!editor.active) {
+    return;
+  }
+  editor.pointerDown = false;
+  editor.hover = null;
+});
+
 function unlockAudio() {
   if (audioUnlocked) {
     return;
@@ -279,6 +613,133 @@ function createEmptySegments() {
     g: false,
   };
 }
+
+function clampNumber(value, min, max, fallback) {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  const rounded = Math.round(value);
+  return Math.min(max, Math.max(min, rounded));
+}
+
+function getExitBands(cols, rows) {
+  const bandWidth = Math.max(2, Math.floor(cols * 0.3));
+  const bandHeight = Math.max(2, Math.floor(rows * 0.3));
+  const width = Math.max(2, Math.min(cols - 2, bandWidth));
+  const height = Math.max(2, Math.min(rows - 2, bandHeight));
+  const startX = (cols - width) / 2;
+  const endX = startX + width;
+  const startY = (rows - height) / 2;
+  const endY = startY + height;
+  return {
+    top: { min: startX, max: endX },
+    bottom: { min: startX, max: endX },
+    left: { min: startY, max: endY },
+    right: { min: startY, max: endY },
+  };
+}
+
+function createEmptyTiles(cols, rows) {
+  return Array.from({ length: rows }, () =>
+    Array(cols).fill(TILE_TYPES.EMPTY)
+  );
+}
+
+function normalizeTiles(raw, cols, rows) {
+  const tiles = createEmptyTiles(cols, rows);
+  if (!Array.isArray(raw)) {
+    return tiles;
+  }
+  for (let y = 0; y < rows; y += 1) {
+    if (!Array.isArray(raw[y])) {
+      continue;
+    }
+    for (let x = 0; x < cols; x += 1) {
+      const value = Number(raw[y][x]);
+      tiles[y][x] =
+        Number.isFinite(value) && value >= 0 && value <= MAX_TILE_ID
+          ? value
+          : TILE_TYPES.EMPTY;
+    }
+  }
+  return tiles;
+}
+
+function resizeTiles(raw, cols, rows) {
+  const tiles = createEmptyTiles(cols, rows);
+  if (!Array.isArray(raw)) {
+    return tiles;
+  }
+  const copyRows = Math.min(rows, raw.length);
+  for (let y = 0; y < copyRows; y += 1) {
+    if (!Array.isArray(raw[y])) {
+      continue;
+    }
+    const copyCols = Math.min(cols, raw[y].length);
+    for (let x = 0; x < copyCols; x += 1) {
+      const value = Number(raw[y][x]);
+      tiles[y][x] =
+        Number.isFinite(value) && value >= 0 && value <= MAX_TILE_ID
+          ? value
+          : TILE_TYPES.EMPTY;
+    }
+  }
+  return tiles;
+}
+
+function buildDefaultStageStore() {
+  const gridSize = { ...DEFAULT_GRID };
+  const stages = STAGE_IDS.map((stageId) =>
+    buildTiles(stageId, gridSize.cols, gridSize.rows)
+  );
+  const voidStage = buildTiles(VOID_STAGE_ID, gridSize.cols, gridSize.rows);
+  return { grid: gridSize, stages, voidStage };
+}
+
+function loadStageStore() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) {
+    return null;
+  }
+  try {
+    const data = JSON.parse(raw);
+    const cols = clampNumber(
+      Number(data?.grid?.cols),
+      GRID_LIMITS.min,
+      GRID_LIMITS.max,
+      DEFAULT_GRID.cols
+    );
+    const rows = clampNumber(
+      Number(data?.grid?.rows),
+      GRID_LIMITS.min,
+      GRID_LIMITS.max,
+      DEFAULT_GRID.rows
+    );
+    const stages = STAGE_IDS.map((_, index) =>
+      normalizeTiles(data?.stages?.[index], cols, rows)
+    );
+    let voidStage = null;
+    if (Array.isArray(data?.voidStage)) {
+      voidStage = normalizeTiles(data.voidStage, cols, rows);
+    } else {
+      voidStage = buildTiles(VOID_STAGE_ID, cols, rows);
+    }
+    return { grid: { cols, rows }, stages, voidStage };
+  } catch (error) {
+    return null;
+  }
+}
+
+function saveStageStore() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(stageStore));
+  } catch (error) {
+    // Ignore storage failures.
+  }
+}
+
+stageStore = loadStageStore() || buildDefaultStageStore();
+grid = { ...stageStore.grid };
 
 function maskFor(list) {
   let mask = 0;
@@ -330,18 +791,95 @@ function getTheme(stageId) {
   };
 }
 
-function applyRect(tiles, rect) {
+function coordKey(coord) {
+  return `${coord.x},${coord.y}`;
+}
+
+function parseCoordKey(key) {
+  const parts = key.split(",").map(Number);
+  return { x: parts[0], y: parts[1] };
+}
+
+function getStageColor(stageId) {
+  if (stageId === "void") {
+    return VOID_THEME.accent;
+  }
+  const index = Number(stageId);
+  return STAGE_ACCENTS[index] || BASE_THEME.wall;
+}
+
+function renderMap() {
+  if (!mapOpen) {
+    return;
+  }
+
+  const rect = mapCanvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) {
+    return;
+  }
+
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  mapCanvas.width = Math.floor(rect.width * dpr);
+  mapCanvas.height = Math.floor(rect.height * dpr);
+  mapCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  mapCtx.fillStyle = "#fbf6ee";
+  mapCtx.fillRect(0, 0, rect.width, rect.height);
+
+  const entries = Array.from(worldMap.entries()).map(([key, stageId]) => ({
+    ...parseCoordKey(key),
+    stageId,
+  }));
+  if (entries.length === 0) {
+    return;
+  }
+
+  let minX = entries[0].x;
+  let maxX = entries[0].x;
+  let minY = entries[0].y;
+  let maxY = entries[0].y;
+  entries.forEach((entry) => {
+    minX = Math.min(minX, entry.x);
+    maxX = Math.max(maxX, entry.x);
+    minY = Math.min(minY, entry.y);
+    maxY = Math.max(maxY, entry.y);
+  });
+
+  const cols = maxX - minX + 1;
+  const rows = maxY - minY + 1;
+  const margin = 12;
+  const cell = Math.min(
+    (rect.width - margin * 2) / cols,
+    (rect.height - margin * 2) / rows
+  );
+  const originX = (rect.width - cell * cols) / 2;
+  const originY = (rect.height - cell * rows) / 2;
+
+  entries.forEach((entry) => {
+    const x = originX + (entry.x - minX) * cell;
+    const y = originY + (entry.y - minY) * cell;
+    mapCtx.fillStyle = getStageColor(entry.stageId);
+    mapCtx.fillRect(x + 1, y + 1, cell - 2, cell - 2);
+    mapCtx.strokeStyle = "rgba(26, 23, 18, 0.25)";
+    mapCtx.strokeRect(x + 0.5, y + 0.5, cell - 1, cell - 1);
+  });
+
+  const cursorX = originX + (currentCoord.x - minX) * cell;
+  const cursorY = originY + (currentCoord.y - minY) * cell;
+  mapCtx.strokeStyle = "#1a1712";
+  mapCtx.lineWidth = 2;
+  mapCtx.strokeRect(cursorX + 0.5, cursorY + 0.5, cell - 1, cell - 1);
+}
+
+function applyRect(tiles, rect, tileType = TILE_TYPES.SOLID) {
+  const rows = tiles.length;
+  const cols = tiles[0]?.length ?? 0;
   for (let y = 0; y < rect.h; y += 1) {
     for (let x = 0; x < rect.w; x += 1) {
       const tileX = rect.x + x;
       const tileY = rect.y + y;
-      if (
-        tileX >= 0 &&
-        tileX < GRID_COLS &&
-        tileY >= 0 &&
-        tileY < GRID_ROWS
-      ) {
-        tiles[tileY][tileX] = true;
+      if (tileX >= 0 && tileX < cols && tileY >= 0 && tileY < rows) {
+        tiles[tileY][tileX] = tileType;
       }
     }
   }
@@ -351,30 +889,29 @@ function inBand(value, band) {
   return value >= band.min && value <= band.max;
 }
 
-function buildTiles(stageId) {
-  const tiles = Array.from({ length: GRID_ROWS }, () =>
-    Array(GRID_COLS).fill(false)
-  );
+function buildTiles(stageId, cols = grid.cols, rows = grid.rows) {
+  const tiles = createEmptyTiles(cols, rows);
+  const exitBands = getExitBands(cols, rows);
 
-  const groundY = GRID_ROWS - 1;
-  for (let x = 0; x < GRID_COLS; x += 1) {
-    if (!inBand(x + 0.5, EXIT_BANDS.bottom)) {
-      tiles[groundY][x] = true;
+  const groundY = rows - 1;
+  for (let x = 0; x < cols; x += 1) {
+    if (!inBand(x + 0.5, exitBands.bottom)) {
+      tiles[groundY][x] = TILE_TYPES.SOLID;
     }
   }
 
   const platforms = [
-    { x: 1, y: 12, w: 3, h: 1 },
-    { x: 6, y: 12, w: 3, h: 1 },
-    { x: 2, y: 9, w: 3, h: 1 },
-    { x: 6, y: 8, w: 3, h: 1 },
-    { x: 1, y: 6, w: 3, h: 1 },
-    { x: 6, y: 5, w: 3, h: 1 },
+    { x: 1, y: 17, w: 4, h: 1 },
+    { x: 8, y: 17, w: 4, h: 1 },
+    { x: 3, y: 13, w: 4, h: 1 },
+    { x: 8, y: 11, w: 4, h: 1 },
+    { x: 1, y: 8, w: 4, h: 1 },
+    { x: 8, y: 7, w: 4, h: 1 },
   ];
 
   if (stageId === "void") {
     platforms.forEach((platform) => applyRect(tiles, platform));
-    applyRect(tiles, { x: 4, y: 10, w: 2, h: 4 });
+    applyRect(tiles, { x: 6, y: 14, w: 3, h: 6 });
     return tiles;
   }
 
@@ -386,32 +923,46 @@ function buildTiles(stageId) {
   });
 
   if (value % 2 === 1) {
-    applyRect(tiles, { x: 4, y: 7, w: 2, h: 1 });
+    applyRect(tiles, { x: 6, y: 10, w: 3, h: 1 });
   }
 
   return tiles;
 }
 
+function getStoredTiles(stageId) {
+  if (stageId === VOID_STAGE_ID && stageStore.voidStage) {
+    return stageStore.voidStage;
+  }
+  const index = Number(stageId);
+  if (!Number.isNaN(index) && stageStore.stages[index]) {
+    return stageStore.stages[index];
+  }
+  return null;
+}
+
 function createStage(stageId) {
+  const stored = getStoredTiles(stageId);
   return {
     id: stageId,
     theme: getTheme(stageId),
-    tiles: buildTiles(stageId),
+    tiles: stored || buildTiles(stageId),
   };
 }
 
 function getAreaForPlayer() {
+  const areaWidth = grid.cols / AREA_COLS;
+  const areaHeight = grid.rows / AREA_ROWS;
   const centerX = Math.min(
     Math.max(player.x + player.w / 2, 0),
-    GRID_COLS - EPS
+    grid.cols - EPS
   );
   const centerY = Math.min(
     Math.max(player.y + player.h / 2, 0),
-    GRID_ROWS - EPS
+    grid.rows - EPS
   );
   return {
-    col: Math.floor(centerX / AREA_SIZE),
-    row: Math.floor(centerY / AREA_SIZE),
+    col: Math.min(AREA_COLS - 1, Math.floor(centerX / areaWidth)),
+    row: Math.min(AREA_ROWS - 1, Math.floor(centerY / areaHeight)),
   };
 }
 
@@ -453,43 +1004,157 @@ function updatePulses(dt) {
   pulses = pulses.filter((pulse) => pulse.life < pulse.ttl);
 }
 
-function isSolid(tileX, tileY) {
-  if (tileX < 0 || tileX >= GRID_COLS || tileY < 0 || tileY >= GRID_ROWS) {
-    return false;
+function rectsForTile(tileX, tileY, type) {
+  switch (type) {
+    case TILE_TYPES.SOLID:
+      return [
+        {
+          x: tileX,
+          y: tileY,
+          w: 1,
+          h: 1,
+          blockX: true,
+          blockY: true,
+          oneWay: false,
+        },
+      ];
+    case TILE_TYPES.HALF_TOP:
+      return [
+        {
+          x: tileX,
+          y: tileY,
+          w: 1,
+          h: 0.5,
+          blockX: true,
+          blockY: true,
+          oneWay: false,
+        },
+      ];
+    case TILE_TYPES.HALF_BOTTOM:
+      return [
+        {
+          x: tileX,
+          y: tileY + 0.5,
+          w: 1,
+          h: 0.5,
+          blockX: true,
+          blockY: true,
+          oneWay: false,
+        },
+      ];
+    case TILE_TYPES.HALF_LEFT:
+      return [
+        {
+          x: tileX,
+          y: tileY,
+          w: 0.5,
+          h: 1,
+          blockX: true,
+          blockY: true,
+          oneWay: false,
+        },
+      ];
+    case TILE_TYPES.HALF_RIGHT:
+      return [
+        {
+          x: tileX + 0.5,
+          y: tileY,
+          w: 0.5,
+          h: 1,
+          blockX: true,
+          blockY: true,
+          oneWay: false,
+        },
+      ];
+    case TILE_TYPES.ONEWAY:
+      return [
+        {
+          x: tileX,
+          y: tileY,
+          w: 1,
+          h: 1,
+          blockX: false,
+          blockY: true,
+          oneWay: true,
+        },
+      ];
+    default:
+      return [];
   }
-  return currentStage.tiles[tileY][tileX];
+}
+
+function collectRects(bounds) {
+  const rects = [];
+  const minX = Math.max(0, Math.floor(bounds.x));
+  const maxX = Math.min(grid.cols - 1, Math.floor(bounds.x + bounds.w));
+  const minY = Math.max(0, Math.floor(bounds.y));
+  const maxY = Math.min(grid.rows - 1, Math.floor(bounds.y + bounds.h));
+
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      const type = currentStage.tiles[y]?.[x] ?? TILE_TYPES.EMPTY;
+      rects.push(...rectsForTile(x, y, type));
+    }
+  }
+
+  return rects;
 }
 
 function movePlayerX(dx) {
   if (!dx) {
     return;
   }
-  const nextX = player.x + dx;
-  const dir = Math.sign(dx);
+  const startX = player.x;
+  let nextX = player.x + dx;
+  const bounds = {
+    x: Math.min(startX, nextX),
+    y: player.y,
+    w: player.w + Math.abs(dx),
+    h: player.h,
+  };
+  const rects = collectRects(bounds);
 
-  if (dir > 0) {
-    const rightEdge = nextX + player.w - EPS;
-    const tileX = Math.floor(rightEdge);
-    const top = Math.floor(player.y + EPS);
-    const bottom = Math.floor(player.y + player.h - EPS);
-    for (let y = top; y <= bottom; y += 1) {
-      if (isSolid(tileX, y)) {
-        player.x = tileX - player.w;
-        player.vx = 0;
+  if (dx > 0) {
+    const startRight = startX + player.w;
+    let limit = nextX;
+    rects.forEach((rect) => {
+      if (!rect.blockX) {
         return;
       }
+      if (rect.y >= player.y + player.h || rect.y + rect.h <= player.y) {
+        return;
+      }
+      if (startRight <= rect.x + EPS && nextX + player.w > rect.x) {
+        const candidate = rect.x - player.w;
+        if (candidate < limit) {
+          limit = candidate;
+        }
+      }
+    });
+    if (limit !== nextX) {
+      nextX = limit;
+      player.vx = 0;
     }
   } else {
-    const leftEdge = nextX + EPS;
-    const tileX = Math.floor(leftEdge);
-    const top = Math.floor(player.y + EPS);
-    const bottom = Math.floor(player.y + player.h - EPS);
-    for (let y = top; y <= bottom; y += 1) {
-      if (isSolid(tileX, y)) {
-        player.x = tileX + 1;
-        player.vx = 0;
+    const startLeft = startX;
+    let limit = nextX;
+    rects.forEach((rect) => {
+      if (!rect.blockX) {
         return;
       }
+      if (rect.y >= player.y + player.h || rect.y + rect.h <= player.y) {
+        return;
+      }
+      if (startLeft >= rect.x + rect.w - EPS && nextX < rect.x + rect.w) {
+        const candidate = rect.x + rect.w;
+        if (candidate > limit) {
+          limit = candidate;
+        }
+      }
+    });
+    if (limit !== nextX) {
+      nextX = limit;
+      player.vx = 0;
     }
   }
 
@@ -500,33 +1165,61 @@ function movePlayerY(dy) {
   if (!dy) {
     return;
   }
-  const nextY = player.y + dy;
-  const dir = Math.sign(dy);
+  const startY = player.y;
+  let nextY = player.y + dy;
+  const bounds = {
+    x: player.x,
+    y: Math.min(startY, nextY),
+    w: player.w,
+    h: player.h + Math.abs(dy),
+  };
+  const rects = collectRects(bounds);
 
-  if (dir > 0) {
-    const bottomEdge = nextY + player.h - EPS;
-    const tileY = Math.floor(bottomEdge);
-    const left = Math.floor(player.x + EPS);
-    const right = Math.floor(player.x + player.w - EPS);
-    for (let x = left; x <= right; x += 1) {
-      if (isSolid(x, tileY)) {
-        player.y = tileY - player.h;
-        player.vy = 0;
-        player.onGround = true;
+  if (dy > 0) {
+    const startBottom = startY + player.h;
+    let limit = nextY;
+    rects.forEach((rect) => {
+      if (!rect.blockY) {
         return;
       }
+      if (rect.x >= player.x + player.w || rect.x + rect.w <= player.x) {
+        return;
+      }
+      if (rect.oneWay && startBottom > rect.y + EPS) {
+        return;
+      }
+      if (startBottom <= rect.y + EPS && nextY + player.h > rect.y) {
+        const candidate = rect.y - player.h;
+        if (candidate < limit) {
+          limit = candidate;
+        }
+      }
+    });
+    if (limit !== nextY) {
+      nextY = limit;
+      player.vy = 0;
+      player.onGround = true;
     }
   } else {
-    const topEdge = nextY + EPS;
-    const tileY = Math.floor(topEdge);
-    const left = Math.floor(player.x + EPS);
-    const right = Math.floor(player.x + player.w - EPS);
-    for (let x = left; x <= right; x += 1) {
-      if (isSolid(x, tileY)) {
-        player.y = tileY + 1;
-        player.vy = 0;
+    const startTop = startY;
+    let limit = nextY;
+    rects.forEach((rect) => {
+      if (!rect.blockY || rect.oneWay) {
         return;
       }
+      if (rect.x >= player.x + player.w || rect.x + rect.w <= player.x) {
+        return;
+      }
+      if (startTop >= rect.y + rect.h - EPS && nextY < rect.y + rect.h) {
+        const candidate = rect.y + rect.h;
+        if (candidate > limit) {
+          limit = candidate;
+        }
+      }
+    });
+    if (limit !== nextY) {
+      nextY = limit;
+      player.vy = 0;
     }
   }
 
@@ -534,7 +1227,7 @@ function movePlayerY(dy) {
 }
 
 function inExitBand(edge, centerX, centerY) {
-  const band = EXIT_BANDS[edge];
+  const band = getExitBands(grid.cols, grid.rows)[edge];
   if (edge === "top" || edge === "bottom") {
     return inBand(centerX, band);
   }
@@ -556,14 +1249,14 @@ function checkForExit() {
     }
   }
 
-  if (player.x + player.w > GRID_COLS) {
+  if (player.x + player.w > grid.cols) {
     if (inExitBand("right", centerX, centerY)) {
-      if (centerX > GRID_COLS + EXIT_TRIGGER) {
+      if (centerX > grid.cols + EXIT_TRIGGER) {
         startTransition("right");
         return;
       }
     } else {
-      player.x = GRID_COLS - player.w;
+      player.x = grid.cols - player.w;
     }
   }
 
@@ -579,14 +1272,14 @@ function checkForExit() {
     }
   }
 
-  if (player.y + player.h > GRID_ROWS) {
+  if (player.y + player.h > grid.rows) {
     if (inExitBand("bottom", centerX, centerY)) {
-      if (centerY > GRID_ROWS + EXIT_TRIGGER) {
+      if (centerY > grid.rows + EXIT_TRIGGER) {
         startTransition("bottom");
         return;
       }
     } else {
-      player.y = GRID_ROWS - player.h;
+      player.y = grid.rows - player.h;
       player.vy = 0;
       player.onGround = true;
     }
@@ -594,13 +1287,23 @@ function checkForExit() {
 }
 
 function startTransition(edge) {
-  const nextStageId = stageIdFromSegments();
+  const dir = EXIT_DIRS[edge];
+  const nextCoord = { x: currentCoord.x + dir.x, y: currentCoord.y + dir.y };
+  let nextStageId = worldMap.get(coordKey(nextCoord));
+  if (!nextStageId) {
+    nextStageId = stageIdFromSegments();
+    worldMap.set(coordKey(nextCoord), nextStageId);
+    if (mapOpen) {
+      renderMap();
+    }
+  }
   transition = {
     active: true,
     progress: 0,
     duration: 0.65,
-    dir: EXIT_DIRS[edge],
+    dir,
     nextStage: createStage(nextStageId),
+    nextCoord,
   };
 
   segments = createEmptySegments();
@@ -618,17 +1321,17 @@ function startTransition(edge) {
 function getEntryPoint(edge) {
   const clampedX = Math.min(
     Math.max(player.x, ENTRY_OFFSET),
-    GRID_COLS - PLAYER_SIZE - ENTRY_OFFSET
+    grid.cols - PLAYER_SIZE - ENTRY_OFFSET
   );
   const clampedY = Math.min(
     Math.max(player.y, ENTRY_OFFSET),
-    GRID_ROWS - PLAYER_SIZE - ENTRY_OFFSET
+    grid.rows - PLAYER_SIZE - ENTRY_OFFSET
   );
 
   switch (edge) {
     case "left":
       return {
-        x: GRID_COLS - PLAYER_SIZE - ENTRY_OFFSET,
+        x: grid.cols - PLAYER_SIZE - ENTRY_OFFSET,
         y: clampedY,
       };
     case "right":
@@ -639,7 +1342,7 @@ function getEntryPoint(edge) {
     case "top":
       return {
         x: clampedX,
-        y: GRID_ROWS - PLAYER_SIZE - ENTRY_OFFSET,
+        y: grid.rows - PLAYER_SIZE - ENTRY_OFFSET,
       };
     case "bottom":
       return {
@@ -659,7 +1362,14 @@ function updateTransition(dt) {
   if (transition.progress >= transition.duration) {
     currentStage = transition.nextStage;
     transition.active = false;
+    if (transition.nextCoord) {
+      currentCoord = transition.nextCoord;
+      worldMap.set(coordKey(currentCoord), currentStage.id);
+    }
     playerRoom = "current";
+    if (mapOpen) {
+      renderMap();
+    }
   }
 }
 
@@ -668,6 +1378,10 @@ function update(dt) {
 
   if (transition.active) {
     updateTransition(dt);
+    return;
+  }
+
+  if (mapOpen || editor.active) {
     return;
   }
 
@@ -706,14 +1420,14 @@ function drawGrid(theme, offsetX, offsetY) {
   ctx.lineWidth = 1;
   ctx.globalAlpha = 0.25;
 
-  for (let x = 1; x < GRID_COLS; x += 1) {
+  for (let x = 1; x < grid.cols; x += 1) {
     const px = offsetX + x * cellSize;
     ctx.beginPath();
     ctx.moveTo(px, offsetY);
     ctx.lineTo(px, offsetY + viewHeight);
     ctx.stroke();
   }
-  for (let y = 1; y < GRID_ROWS; y += 1) {
+  for (let y = 1; y < grid.rows; y += 1) {
     const py = offsetY + y * cellSize;
     ctx.beginPath();
     ctx.moveTo(offsetX, py);
@@ -725,21 +1439,22 @@ function drawGrid(theme, offsetX, offsetY) {
 }
 
 function drawBorders(theme, offsetX, offsetY) {
+  const exitBands = getExitBands(grid.cols, grid.rows);
   const topGap = {
-    start: EXIT_BANDS.top.min * cellSize,
-    end: EXIT_BANDS.top.max * cellSize,
+    start: exitBands.top.min * cellSize,
+    end: exitBands.top.max * cellSize,
   };
   const bottomGap = {
-    start: EXIT_BANDS.bottom.min * cellSize,
-    end: EXIT_BANDS.bottom.max * cellSize,
+    start: exitBands.bottom.min * cellSize,
+    end: exitBands.bottom.max * cellSize,
   };
   const leftGap = {
-    start: EXIT_BANDS.left.min * cellSize,
-    end: EXIT_BANDS.left.max * cellSize,
+    start: exitBands.left.min * cellSize,
+    end: exitBands.left.max * cellSize,
   };
   const rightGap = {
-    start: EXIT_BANDS.right.min * cellSize,
-    end: EXIT_BANDS.right.max * cellSize,
+    start: exitBands.right.min * cellSize,
+    end: exitBands.right.max * cellSize,
   };
 
   ctx.strokeStyle = theme.wall;
@@ -786,17 +1501,44 @@ function drawBorders(theme, offsetX, offsetY) {
   ctx.stroke();
 }
 
+function drawTile(type, x, y, offsetX, offsetY) {
+  const px = offsetX + x * cellSize;
+  const py = offsetY + y * cellSize;
+  const half = cellSize * 0.5;
+
+  switch (type) {
+    case TILE_TYPES.SOLID:
+      ctx.fillRect(px, py, cellSize, cellSize);
+      break;
+    case TILE_TYPES.HALF_TOP:
+      ctx.fillRect(px, py, cellSize, half);
+      break;
+    case TILE_TYPES.HALF_BOTTOM:
+      ctx.fillRect(px, py + half, cellSize, half);
+      break;
+    case TILE_TYPES.HALF_LEFT:
+      ctx.fillRect(px, py, half, cellSize);
+      break;
+    case TILE_TYPES.HALF_RIGHT:
+      ctx.fillRect(px + half, py, half, cellSize);
+      break;
+    case TILE_TYPES.ONEWAY: {
+      const height = Math.max(3, cellSize * 0.2);
+      ctx.fillRect(px, py, cellSize, height);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
 function drawObstacles(stage, offsetX, offsetY) {
   ctx.fillStyle = stage.theme.wall;
-  for (let y = 0; y < GRID_ROWS; y += 1) {
-    for (let x = 0; x < GRID_COLS; x += 1) {
-      if (stage.tiles[y][x]) {
-        ctx.fillRect(
-          offsetX + x * cellSize,
-          offsetY + y * cellSize,
-          cellSize,
-          cellSize
-        );
+  for (let y = 0; y < grid.rows; y += 1) {
+    for (let x = 0; x < grid.cols; x += 1) {
+      const type = stage.tiles[y]?.[x] ?? TILE_TYPES.EMPTY;
+      if (type !== TILE_TYPES.EMPTY) {
+        drawTile(type, x, y, offsetX, offsetY);
       }
     }
   }
@@ -833,6 +1575,27 @@ function drawPlayer(stage, offsetX, offsetY) {
     player.w * cellSize,
     player.h * cellSize
   );
+}
+
+function drawEditorOverlay(offsetX, offsetY) {
+  if (!editor.active || !editor.hover) {
+    return;
+  }
+  const x = editor.hover.x;
+  const y = editor.hover.y;
+  if (x < 0 || x >= grid.cols || y < 0 || y >= grid.rows) {
+    return;
+  }
+  ctx.strokeStyle = currentStage.theme.accent;
+  ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.8;
+  ctx.strokeRect(
+    offsetX + x * cellSize + 1,
+    offsetY + y * cellSize + 1,
+    cellSize - 2,
+    cellSize - 2
+  );
+  ctx.globalAlpha = 1;
 }
 
 function renderStage(stage, offsetX, offsetY) {
@@ -884,6 +1647,8 @@ function render() {
     playerOffsetX,
     playerOffsetY
   );
+
+  drawEditorOverlay(currentOffsetX, currentOffsetY);
 }
 
 function resize() {
@@ -893,15 +1658,15 @@ function resize() {
   const reserved =
     controls.offsetHeight + hint.offsetHeight + title.offsetHeight + 32;
   const availableHeight = Math.max(300, window.innerHeight - reserved);
-  const maxWidthByHeight = availableHeight * (GRID_COLS / GRID_ROWS);
+  const maxWidthByHeight = availableHeight * (grid.cols / grid.rows);
   const maxWidthByWidth = window.innerWidth * 0.92;
 
   viewWidth = Math.max(
     220,
     Math.floor(Math.min(maxWidthByWidth, maxWidthByHeight))
   );
-  viewHeight = Math.floor(viewWidth * (GRID_ROWS / GRID_COLS));
-  cellSize = viewWidth / GRID_COLS;
+  viewHeight = Math.floor(viewWidth * (grid.rows / grid.cols));
+  cellSize = viewWidth / grid.cols;
 
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   canvas.style.width = `${viewWidth}px`;
@@ -912,6 +1677,10 @@ function resize() {
 
   document.documentElement.style.setProperty("--play-width", `${viewWidth}px`);
   document.documentElement.style.setProperty("--play-height", `${viewHeight}px`);
+
+  if (mapOpen) {
+    renderMap();
+  }
 }
 
 function tick(now) {
@@ -923,17 +1692,21 @@ function tick(now) {
 }
 
 function startGame() {
-  currentStage = createStage("0");
+  worldMap = new Map();
+  currentCoord = { x: 0, y: 0 };
+  worldMap.set(coordKey(currentCoord), "0");
+  currentStage = createStage(editor.stageId);
   segments = createEmptySegments();
   player = {
     x: 1.5,
-    y: 13,
+    y: grid.rows - 2,
     w: PLAYER_SIZE,
     h: PLAYER_SIZE,
     vx: 0,
     vy: 0,
     onGround: false,
   };
+  initEditorUI();
   resize();
   requestAnimationFrame(tick);
 }

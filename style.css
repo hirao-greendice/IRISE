@@ -63,12 +63,25 @@ body {
   letter-spacing: 0.22em;
 }
 
+.game-area {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.stage-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .game {
   width: var(--play-width);
   height: var(--play-height);
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
 }
 
 canvas {
@@ -78,6 +91,200 @@ canvas {
   border: 2px solid var(--frame);
   background: var(--paper);
   box-shadow: var(--shadow);
+}
+
+.map-button {
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 2px solid var(--frame);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+.editor-button {
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 2px solid var(--frame);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+.editor-button:active {
+  transform: translateY(1px);
+}
+
+.editor-button.active {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.map-button:active {
+  transform: translateY(1px);
+}
+
+.editor-panel {
+  width: min(92vw, 520px);
+  padding: 14px;
+  border: 2px solid var(--frame);
+  background: var(--paper);
+  box-shadow: var(--shadow);
+  display: none;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  z-index: 12;
+}
+
+.editor-panel.active {
+  display: grid;
+}
+
+.editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.editor-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+}
+
+.editor-close {
+  border: 2px solid var(--frame);
+  background: var(--paper);
+  color: var(--ink);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.editor-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.editor-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+}
+
+.editor-value {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+}
+
+.editor-panel select,
+.editor-panel input,
+.editor-action,
+.tile-button {
+  border: 2px solid var(--frame);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 12px;
+  padding: 6px 10px;
+}
+
+.editor-panel input {
+  width: 72px;
+}
+
+.tile-palette {
+  align-items: flex-start;
+}
+
+.tile-button {
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.tile-button.active,
+.editor-action:active {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.editor-hint {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+
+.map-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(26, 23, 18, 0.62);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  z-index: 20;
+}
+
+.map-overlay.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.map-panel {
+  width: min(86vw, 420px);
+  padding: 16px;
+  border: 2px solid var(--frame);
+  background: var(--paper);
+  box-shadow: var(--shadow);
+}
+
+.map-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.map-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+}
+
+.map-close {
+  border: 2px solid var(--frame);
+  background: var(--paper);
+  color: var(--ink);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+#map {
+  width: min(78vw, 360px);
+  height: min(78vw, 360px);
+  display: block;
+  border: 2px solid var(--frame);
+  background: #fbf6ee;
+  box-shadow: none;
 }
 
 .controls {
@@ -146,8 +353,33 @@ canvas {
     font-size: 24px;
   }
 
+  .editor-panel {
+    padding: 12px;
+  }
+
+  .game-area {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .stage-tools {
+    flex-direction: row;
+    justify-content: center;
+    width: 100%;
+  }
+
   .control {
     padding: 16px 8px;
     font-size: 13px;
+  }
+}
+
+@media (min-width: 980px) {
+  .editor-panel {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    max-height: calc(100vh - 32px);
+    overflow: auto;
   }
 }
